@@ -12,9 +12,12 @@ const getReportData = (parameter, callback) => {
                         IFNULL(FORMAT(((SUM(te.hours) * 100) / te2.hours), 2), 0) AS percentage,
                         p.id AS project_id,
                         u.id AS user_id,
+                        ea.address AS email,
                         DATE_FORMAT(te.spent_on,'%Y-%m-%d') AS date`;
 
     query += ` FROM users AS u`;
+
+    query += ` LEFT JOIN email_addresses AS ea ON ea.user_id = u.id`;
 
     query += ` LEFT JOIN time_entries AS te ON te.user_id = u.id AND spent_on BETWEEN '${parameter.startDate}' AND '${parameter.endDate}'`;
 

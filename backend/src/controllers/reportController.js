@@ -4,6 +4,7 @@ const responseHelper = require('../helper/responseHelper');
 const commanHelper = require('../helper/commanHelper');
 const { getReportData } = require('../models/reportModel');
 const moment = require('moment');
+const { getEmployeeRecords, getLeaveBookedAndBalance } = require('../helper/zohoApiHelper');
 
 /**
  * @swagger
@@ -57,7 +58,7 @@ const moment = require('moment');
  *       '200':
  *         description: A list of filtered report
  */
-router.get('/report', (req, res) => {
+router.get('/report', async (req, res) => {
     try {
         const startDate = req.query.startDate ? moment(req.query.startDate, 'DD/MM/YYYY').format('YYYY-MM-DD') : "";
         const endDate = req.query.endDate ? moment(req.query.endDate, 'DD/MM/YYYY').format('YYYY-MM-DD') : "";
@@ -87,8 +88,12 @@ router.get('/report', (req, res) => {
 
         const params = { startDate, endDate, orderBy, type, startIndex, endIndex, page, pageSize, search };
 
-        // const totalWorkingDaysExcludeWeekends = commanHelper.excludeWeekends(startDate, endDate);
-        const totalWorkingDaysExcludeWeekends = commanHelper.excludeWeekends(startDate, moment().format('MMMM') === moment(endDate).format('MMMM') ? moment().format('YYYY-MM-DD') : endDate);
+        const totalWorkingDaysExcludeWeekendsAndHolidays = await commanHelper.excludeWeekends(startDate, moment().format('MMMM') === moment(endDate).format('MMMM') ? moment().format('YYYY-MM-DD') : endDate);
+
+        const [employeeRecords, leaveBookedAndBalance] = await Promise.all([
+            getEmployeeRecords(),
+            getLeaveBookedAndBalance(startDate, endDate)
+        ]);
 
         getReportData(params, (err, arr) => {
             if (err) {
@@ -97,15 +102,26 @@ router.get('/report', (req, res) => {
             else {
                 let data = [];
                 let hours = 0;
+                let personalLeavesInDays = 0;
+                let personalLeavesInHours = 0;
                 let results = arr;
 
                 results.map((item) => {
+                    let employeeData = employeeRecords.find(employeeRecord => employeeRecord['Email address'] === item.email)
+                    if (employeeData?.recordId !== undefined && employeeData.recordId) {
+                        let data = commanHelper.filterObjectByKeys(leaveBookedAndBalance.report, [employeeData.recordId]);
+                        if (data[employeeData.recordId] !== undefined) {
+                            personalLeavesInDays = data[employeeData.recordId]?.totals?.paidBooked + data[employeeData.recordId]?.totals?.unpaidBooked;
+                            personalLeavesInHours = personalLeavesInDays * 7.5;
+                        }
+                    }
+
                     hours = parseInt(item.hours);
                     var object = data.find((u) => u.ID === item.ID);
 
                     if (!!object) {
                         object.totalHours += hours;
-                        object.missingWorkingHours = totalWorkingDaysExcludeWeekends.totalWorkingHours - object.totalHours,
+                        object.missingWorkingHours = (totalWorkingDaysExcludeWeekendsAndHolidays.totalWorkingHours - personalLeavesInHours) - object.totalHours,
                             object.array.push({
                                 id: type === 'user' ? item.project_id : item.user_id,
                                 name: type === 'user' ? item.project_name : item.name,
@@ -117,7 +133,7 @@ router.get('/report', (req, res) => {
                             ID: item.ID,
                             name: type === 'user' ? item.name : item.project_name,
                             totalHours: hours,
-                            missingWorkingHours: totalWorkingDaysExcludeWeekends.totalWorkingHours - hours,
+                            missingWorkingHours: (totalWorkingDaysExcludeWeekendsAndHolidays.totalWorkingHours - personalLeavesInHours) - hours,
                             array: [
                                 {
                                     id: type === 'user' ? item.project_id : item.user_id,
